@@ -1,29 +1,22 @@
-
-# =============================
-# Telegram Earning Bot (Full)
-# Includes Admin Panel, Tasks from MongoDB, Balance, Refer
-# =============================
-
 import os
 import time
 from datetime import datetime
 import telebot
 from telebot import types
 from pymongo import MongoClient
-from bson.objectid import ObjectId
 
 # === CONFIG ===
 TOKEN = os.getenv("TOKEN") or "7869962843:AAGYUWT0o0_E-ysKFfmRGWqGQozcOPb3FYg"
 CHANNEL = os.getenv("CHANNEL") or "@takakeepercom"
 MONGO_URI = os.getenv("MONGO_URI") or "mongodb+srv://takakeeper:sr@@http://95850270@takakeeper.96qzkoi.mongodb.net/?retryWrites=true&w=majority&appName=TakaKeeper"
-ADMIN_ID = 7279163908  # <-- Replace with your own Telegram ID
+ADMIN_ID = 7279163908  # নিজের টেলিগ্রাম আইডি দিন (@userinfobot দিয়ে দেখে নিন)
 
 bot = telebot.TeleBot(TOKEN)
 client = MongoClient(MONGO_URI)
 db = client['earnBotDB']
 users = db['users']
 task_logs = db['task_logs']
-tasks = db['tasks']
+ads = db['ads']  # Task গুলোর জন্য আলাদা কালেকশন
 
 # === START COMMAND ===
 @bot.message_handler(commands=['start'])
@@ -37,8 +30,7 @@ def start_handler(m):
     else:
         kb = types.InlineKeyboardMarkup()
         kb.add(types.InlineKeyboardButton("✅ Join Done", callback_data='check_join'))
-        bot.send_message(uid, f"🔔 প্রথমে আমাদের চ্যানেল Join করুন:
-{CHANNEL}", reply_markup=kb)
+        bot.send_message(uid, f"🔔 প্রথমে আমাদের চ্যানেল Join করুন:\n{CHANNEL}", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data == 'check_join')
 def check_join_cb(c):
@@ -65,27 +57,22 @@ def check_balance(m):
 # === TASK SYSTEM ===
 @bot.message_handler(func=lambda m: m.text == "🎯 Task")
 def task_menu(m):
-    ads = list(tasks.find())
-    if not ads:
-        return bot.send_message(m.chat.id, "🚫 এখন কোনো Task নেই!")
     kb = types.InlineKeyboardMarkup()
-    for i, ad in enumerate(ads):
+    for ad in ads.find({'active': True}):
         kb.add(types.InlineKeyboardButton(f"▶️ Watch Ad +{ad['reward']}", callback_data=f"watch_{ad['_id']}"))
     bot.send_message(m.chat.id, "🪙 ৩০ সেকেন্ড এড দেখে কয়েন আয় করুন:", reply_markup=kb)
 
 @bot.callback_query_handler(func=lambda c: c.data.startswith('watch_'))
 def watch_ad(c):
     ad_id = c.data.split('_')[1]
-    ad = tasks.find_one({'_id': ObjectId(ad_id)})
+    ad = ads.find_one({'_id': ad_id})
     if not ad:
-        return bot.answer_callback_query(c.id, "❌ Task পাওয়া যায়নি!")
-
-    bot.send_message(c.from_user.id, f"▶️ এই লিংকে ৩০ সেকেন্ড থাকুন:
-{ad['link']}")
+        return bot.answer_callback_query(c.id, "❌ এই এড আর সক্রিয় নেই।")
+    bot.send_message(c.from_user.id, f"▶️ এই লিংকে ৩০ সেকেন্ড থাকুন:\n{ad['link']}")
     task_logs.insert_one({
         'user_id': c.from_user.id,
         'start': datetime.utcnow(),
-        'ad_link': ad['link'],
+        'ad_id': ad_id,
         'reward': ad['reward'],
         'claimed': False
     })
@@ -117,19 +104,25 @@ def placeholders(m):
 def admin_panel(m):
     if m.from_user.id != ADMIN_ID: return
     text = (
-        "🛠️ Admin Panel Commands:
-"
-        "/users - Total users
-"
-        "/addcoins user_id amount
-"
-        "/balance user_id
-"
-        "/broadcast message
-"
+        "🛠️ Admin Panel Commands:\n"
+        "/users - Total users\n"
+        "/addcoins user_id amount\n"
+        "/balance user_id\n"
+        "/broadcast message\n"
         "/addtask link reward"
     )
     bot.send_message(m.chat.id, text)
+
+@bot.message_handler(commands=['addtask'])
+def add_task(m):
+    if m.from_user.id != ADMIN_ID: return
+    try:
+        _, link, reward = m.text.split()
+        ad = {'link': link, 'reward': int(reward), 'active': True}
+        ads.insert_one(ad)
+        bot.send_message(m.chat.id, "✅ Task যোগ হয়েছে!")
+    except:
+        bot.send_message(m.chat.id, "❌ ফরম্যাট: /addtask link reward")
 
 @bot.message_handler(commands=['users'])
 def total_users(m):
@@ -175,21 +168,6 @@ def broadcast_message(m):
         except:
             continue
     bot.send_message(m.chat.id, f"✅ {sent} জনকে বার্তা পাঠানো হয়েছে")
-
-@bot.message_handler(commands=['addtask'])
-def add_task(m):
-    if m.from_user.id != ADMIN_ID: return
-    try:
-        _, link, reward = m.text.split()
-        reward = int(reward)
-        tasks.insert_one({"link": link, "reward": reward})
-        bot.send_message(m.chat.id, f"✅ Task added:
-🔗 {link}
-💰 Reward: {reward} কয়েন")
-    except:
-        bot.send_message(m.chat.id, "❌ Format: /addtask link reward
-উদাহরণ:
-/addtask https://montag.com/ad/1 10")
 
 # === RUN ===
 print("🤖 Bot is running...")
